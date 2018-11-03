@@ -1,0 +1,10 @@
+[workspace]
+
+members = [
+  "jnigen",
+  "jnigen_build",
+]
+
+exclude = [
+  "test"
+]

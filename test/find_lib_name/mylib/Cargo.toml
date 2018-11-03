@@ -1,0 +1,15 @@
+[package]
+name = "mylib"
+version = "0.1.0"
+authors = ["Maximilian Goisser <goisser94@gmail.com>"]
+
+[lib]
+name = "otherlib"
+crate_type = ["cdylib"]
+
+[dependencies]
+jni = "0.10.2"
+jnigen = { path = "../../../jnigen" }
+
+[build-dependencies]
+jnigen_build = { path = "../../../jnigen_build" }

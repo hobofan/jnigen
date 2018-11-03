@@ -1,0 +1,7 @@
+[package]
+name = "jnigen_build"
+version = "0.1.0"
+authors = ["Maximilian Goisser <goisser94@gmail.com>"]
+
+[dependencies]
+jnigen_shared = { version = "0.1", path = "../jnigen_shared" }

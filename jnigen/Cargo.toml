@@ -1,0 +1,16 @@
+[package]
+name = "jnigen"
+version = "0.1.0"
+authors = ["Maximilian Goisser <goisser94@gmail.com>"]
+
+[lib]
+proc-macro = true
+
+[[bin]]
+name = "cargo-jnigen"
+path = "src/cargo-jnigen.rs"
+
+[dependencies]
+jnigen_shared = { version = "0.1", path = "../jnigen_shared" }
+syn = { version = "0.15", features = ["full", "extra-traits"] }
+quote = "0.6"
