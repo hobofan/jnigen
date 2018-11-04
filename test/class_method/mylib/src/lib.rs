@@ -1,7 +1,7 @@
 extern crate jni;
 extern crate jnigen;
 
-use jnigen::{jni, JNI};
+use jnigen::jni;
 
 use jni::JNIEnv;
 use jni::objects::{JObject, JString};

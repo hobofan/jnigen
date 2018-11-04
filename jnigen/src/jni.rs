@@ -106,12 +106,22 @@ fn add_fn_to_structure(
         _ => false,
     };
 
+    let parameters = input
+        .decl
+        .inputs
+        .iter()
+        .skip(2)
+        .map(|input| (input_type_resolved(input), input_ident(input)))
+        .collect();
+
+    let return_type = return_type_resolved(&input.decl.output);
+
     let fn_name = input.ident.to_string();
     class.methods.push(Method {
         is_static,
         name: fn_name,
-        return_type: "String".to_owned(), // TODO
-        parameters: vec![("String".to_string(), "input".to_string())], // TODO
+        return_type,
+        parameters,
     });
 
     TokenStream::new()
@@ -127,4 +137,55 @@ fn input_type(input: &syn::FnArg) -> String {
         }
         _ => panic!("Unrecognized function parameter"),
     }
+}
+
+fn input_type_resolved(input: &syn::FnArg) -> String {
+    let raw_type = input_type(input);
+    resolve_type(&raw_type)
+}
+
+fn input_ident(input: &syn::FnArg) -> String {
+    match input {
+        syn::FnArg::Captured(captured) => {
+            if let syn::Pat::Ident(ref ident) = captured.pat {
+                return ident.ident.to_string();
+            }
+            panic!("Unrecognized function parameter ident")
+        }
+        _ => panic!("Unrecognized function parameter ident"),
+    }
+}
+
+fn return_type(output: &syn::ReturnType) -> String {
+    match output {
+        syn::ReturnType::Type(_, inner_type) => {
+            if let syn::Type::Path(ref path) = inner_type.as_ref() {
+                return path.path.segments.iter().last().unwrap().ident.to_string();
+            }
+            panic!("Unable to process return type");
+        }
+        syn::ReturnType::Default => return "void".to_string(),
+    }
+}
+
+fn return_type_resolved(output: &syn::ReturnType) -> String {
+    let raw_type = return_type(output);
+    resolve_type(&raw_type)
+}
+
+fn resolve_type(raw_type: &str) -> String {
+    match raw_type.as_ref() {
+        "JString" | "jstring" => "String",
+        "jbyte" => "byte",
+        "jchar" => "char",
+        "jint" => "int",
+        "jshort" => "short",
+        "jlong" => "long",
+        "jboolean" => "boolean",
+        "jfloat" => "float",
+        "jdouble" => "double",
+
+        "void" => "void",
+        other => panic!("Unable to resolve type \"{}\"", other),
+    }.to_owned()
 }
