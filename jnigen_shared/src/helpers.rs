@@ -170,6 +170,16 @@ impl CodegenStructure {
         serde_json::to_writer(&mut file.file, &self)?;
         Ok(file.file.flush().unwrap())
     }
+
+    pub fn package(&mut self, package: &str) -> &mut Package {
+        if self.packages.iter().find(|n| n.name == package).is_none() {
+            self.packages.push(Package::new(package.to_owned()));
+        }
+        self.packages
+            .iter_mut()
+            .find(|n| n.name == package)
+            .unwrap()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -185,12 +195,20 @@ impl Package {
             classes: Vec::new(),
         }
     }
+
+    pub fn class(&mut self, class: &str) -> &mut Class {
+        if self.classes.iter().find(|n| n.name == class).is_none() {
+            self.classes.push(Class::new(class.to_owned()));
+        }
+        self.classes.iter_mut().find(|n| n.name == class).unwrap()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Class {
     pub name: String,
     pub methods: Vec<Method>,
+    pub implements: Vec<String>,
 }
 
 impl Class {
@@ -198,6 +216,7 @@ impl Class {
         Self {
             name,
             methods: Vec::new(),
+            implements: Vec::new(),
         }
     }
 }
@@ -207,4 +226,5 @@ pub struct Method {
     pub name: String,
     pub return_type: String,
     pub parameters: Vec<(String, String)>,
+    pub is_static: bool,
 }

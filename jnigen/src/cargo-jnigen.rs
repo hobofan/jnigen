@@ -45,19 +45,31 @@ fn create_package_class_file(lib_name: &str, package: &str, class: &Class) {
             for parameter in &method.parameters {
                 parameter_parts.push(format!("{} {}", parameter.0, parameter.1));
             }
+            let static_part = match method.is_static {
+                true => "static ",
+                false => "",
+            };
 
             let mut method_line = String::new();
             write!(
                 &mut method_line,
-                "public static native {0} {1}({2});",
+                "public {3}native {0} {1}({2});",
                 method.return_type,
                 method.name,
-                parameter_parts.join(",").to_owned()
+                parameter_parts.join(",").to_owned(),
+                static_part,
             ).unwrap();
 
             lines.push(method_line);
         }
         lines.join("\n")
+    };
+
+    let implements_part = {
+        match class.implements.is_empty() {
+            true => "".to_owned(),
+            false => format!(" implements {}", class.implements.join(", ")),
+        }
     };
 
     let file_path = package_dir(package).join(&format!("{}.java", class_name));
@@ -67,7 +79,7 @@ fn create_package_class_file(lib_name: &str, package: &str, class: &Class) {
         "
             package {0};
 
-            public class {1} {{
+            public class {1}{4} {{
                 {2}
 
                 static {{
@@ -75,6 +87,6 @@ fn create_package_class_file(lib_name: &str, package: &str, class: &Class) {
                 }}
             }}
         ",
-        package, class_name, methods_part, lib_name
+        package, class_name, methods_part, lib_name, implements_part
     ).unwrap();
 }

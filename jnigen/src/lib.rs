@@ -3,12 +3,13 @@ extern crate proc_macro;
 extern crate quote;
 extern crate syn;
 
-use jnigen_shared::helpers::{Class, CodegenStructure, Method, Package};
+use jnigen_shared::helpers::{CodegenStructure, Method};
 use jnigen_shared::helpers;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, AttributeArgs, ItemFn};
+use syn::{parse_macro_input, AttributeArgs, ItemFn, ItemStruct};
 
+#[allow(non_snake_case)]
 #[proc_macro_attribute]
 pub fn jni(attr: TokenStream, item: TokenStream) -> TokenStream {
     let structure = CodegenStructure::from_file();
@@ -25,6 +26,50 @@ pub fn jni(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     processed_item
+}
+
+#[proc_macro_derive(JNI, attributes(jni_class))]
+pub fn derive_jni(item: TokenStream) -> TokenStream {
+    let structure = CodegenStructure::from_file();
+    if let Some(mut structure) = structure {
+        let input = parse_macro_input!(item as ItemStruct);
+        let attrs = transform_derive_attrs(&input.attrs);
+
+        let class_name = input.ident.to_string();
+        let package = attr_package(&attrs, true).expect("\"package\" attribute value missing");
+        let mut attr_implements: Vec<String> = attr_implements(&attrs);
+
+        structure
+            .package(&package)
+            .class(&class_name)
+            .implements
+            .append(&mut attr_implements);
+
+        structure.to_file().unwrap();
+        helpers::set_out_dir_hint();
+    }
+    "".parse().unwrap()
+}
+
+fn transform_derive_attrs(input_attrs: &[syn::Attribute]) -> AttributeArgs {
+    let mut attrs: AttributeArgs = input_attrs
+        .iter()
+        .filter_map(|n| n.parse_meta().ok().map(|n| n.into()))
+        .collect();
+    attrs = attrs
+        .into_iter()
+        .filter_map(|n| {
+            if let syn::NestedMeta::Meta(meta) = n {
+                if let syn::Meta::List(list) = meta {
+                    return Some(list.nested.into_iter().collect::<AttributeArgs>());
+                }
+            }
+            None
+        })
+        .flatten()
+        .collect::<AttributeArgs>();
+
+    attrs
 }
 
 fn add_attributes(item: TokenStream) -> TokenStream {
@@ -64,7 +109,7 @@ fn set_fn_name(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr_input = parse_macro_input!(attr as AttributeArgs);
     let mut input = parse_macro_input!(item as ItemFn);
 
-    let package_name_part = fn_package_name_part(&attr_input);
+    let package_name_part = attr_package(&attr_input, false);
     let class_part = fn_class_part(&attr_input);
 
     let mut fn_name = input.ident.to_string();
@@ -90,58 +135,50 @@ fn add_fn_to_structure(
     let attr_input = parse_macro_input!(attr as AttributeArgs);
     let input = parse_macro_input!(item as ItemFn);
 
-    let package_name_part = fn_package_name_part(&attr_input);
+    let package_name_part = attr_package(&attr_input, false);
     if package_name_part.is_none() {
         return TokenStream::new();
     }
     let package_name_part = package_name_part.unwrap();
     let original_package_name = str::replace(&package_name_part, "_", ".");
-    let package: &mut Package = {
-        if structure
-            .packages
-            .iter()
-            .find(|n| n.name == original_package_name)
-            .is_none()
-        {
-            structure
-                .packages
-                .push(Package::new(original_package_name.clone()));
-        }
-        structure
-            .packages
-            .iter_mut()
-            .find(|n| n.name == original_package_name)
-            .unwrap()
-    };
+    let package = structure.package(&original_package_name);
 
     let class_part = fn_class_part(&attr_input);
-    let class = {
-        if package
-            .classes
-            .iter()
-            .find(|n| n.name == class_part)
-            .is_none()
-        {
-            package.classes.push(Class::new(class_part.clone()));
-        }
-        package
-            .classes
-            .iter_mut()
-            .find(|n| n.name == class_part)
-            .unwrap()
+    let class = package.class(&class_part);
+
+    let is_static = match input.decl.inputs.iter().nth(1).map(input_ident) {
+        Some(input_type) => match &*input_type {
+            "JClass" => true,
+            "JObject" => false,
+            _ => true,
+        },
+        _ => false,
     };
 
     let fn_name = input.ident.to_string();
     class.methods.push(Method {
+        is_static,
         name: fn_name,
         return_type: "String".to_owned(), // TODO
-        parameters: vec![("String".to_string(), "input".to_string())],
+        parameters: vec![("String".to_string(), "input".to_string())], // TODO
     });
 
     TokenStream::new()
 }
 
-fn fn_package_name_part(attr_input: &syn::AttributeArgs) -> Option<String> {
+fn input_ident(input: &syn::FnArg) -> String {
+    match input {
+        syn::FnArg::Captured(captured) => {
+            if let syn::Type::Path(ref path) = captured.ty {
+                return path.path.segments.iter().last().unwrap().ident.to_string();
+            }
+            panic!("Unrecognized function parameter")
+        }
+        _ => panic!("Unrecognized function parameter"),
+    }
+}
+
+fn attr_package(attr_input: &syn::AttributeArgs, dotted: bool) -> Option<String> {
     let mut package_name_part: Option<String> = None;
     let package_attr = attr_input.iter().find(|n| {
         if let syn::NestedMeta::Meta(meta) = n {
@@ -154,12 +191,41 @@ fn fn_package_name_part(attr_input: &syn::AttributeArgs) -> Option<String> {
     if let Some(syn::NestedMeta::Meta(syn::Meta::NameValue(val))) = package_attr {
         if let syn::Lit::Str(ref lit_val) = val.lit {
             let mut package_name = lit_val.value();
-            package_name = str::replace(&package_name, ".", "_");
+            if !dotted {
+                package_name = str::replace(&package_name, ".", "_");
+            }
             package_name_part = Some(package_name);
         }
     }
 
     package_name_part
+}
+
+fn attr_implements(attr_input: &syn::AttributeArgs) -> Vec<String> {
+    let mut implements = Vec::new();
+    for attribute in attr_input {
+        let mut implements_opt: Option<String> = None;
+        let implements_attr = match attribute {
+            syn::NestedMeta::Meta(meta) => {
+                if meta.name() == "implements" {
+                    Some(attribute)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(syn::NestedMeta::Meta(syn::Meta::NameValue(val))) = implements_attr {
+            if let syn::Lit::Str(ref lit_val) = val.lit {
+                let mut implements_name = lit_val.value();
+                implements_opt = Some(implements_name);
+            }
+        }
+        if let Some(item) = implements_opt {
+            implements.push(item);
+        }
+    }
+    implements
 }
 
 fn fn_class_part(attr_input: &syn::AttributeArgs) -> String {
