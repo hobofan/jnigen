@@ -4,3 +4,4 @@ set -euxo pipefail
 (cd static_method && ./build.sh)
 (cd class_method && ./build.sh)
 (cd class_implements && ./build.sh)
+(cd jni_raw_java && ./build.sh)

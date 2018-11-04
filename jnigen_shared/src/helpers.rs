@@ -209,6 +209,7 @@ pub struct Class {
     pub name: String,
     pub methods: Vec<Method>,
     pub implements: Vec<String>,
+    pub raw_java: Vec<String>,
 }
 
 impl Class {
@@ -217,6 +218,7 @@ impl Class {
             name,
             methods: Vec::new(),
             implements: Vec::new(),
+            raw_java: Vec::new(),
         }
     }
 }

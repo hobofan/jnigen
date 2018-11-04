@@ -72,6 +72,8 @@ fn create_package_class_file(lib_name: &str, package: &str, class: &Class) {
         }
     };
 
+    let raw_java_part = class.raw_java.join("\n");
+
     let file_path = package_dir(package).join(&format!("{}.java", class_name));
     let mut class_file = File::create(file_path).unwrap();
     write!(
@@ -82,11 +84,13 @@ fn create_package_class_file(lib_name: &str, package: &str, class: &Class) {
             public class {1}{4} {{
                 {2}
 
+                {5}
+
                 static {{
                     System.loadLibrary(\"{3}\");
                 }}
             }}
         ",
-        package, class_name, methods_part, lib_name, implements_part
+        package, class_name, methods_part, lib_name, implements_part, raw_java_part
     ).unwrap();
 }

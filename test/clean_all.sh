@@ -4,3 +4,4 @@ set -euxo pipefail
 (cd static_method/mylib && cargo clean)
 (cd class_method/mylib && cargo clean)
 (cd class_implements/mylib && cargo clean)
+(cd jni_raw_java/mylib && cargo clean)
