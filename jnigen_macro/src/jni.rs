@@ -13,6 +13,7 @@ pub fn jni_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     processed_item = set_visibility(processed_item);
     processed_item = set_fn_name(attr.clone(), processed_item);
     processed_item = adjust_parameters(attr.clone(), processed_item);
+    processed_item = adjust_return_type(attr.clone(), processed_item);
 
     if let Some(mut structure) = structure {
         add_fn_to_structure(attr, item, &mut structure);
@@ -119,6 +120,34 @@ fn adjust_parameters(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
+fn adjust_return_type(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut input = parse_macro_input!(item as ItemFn);
+
+    let mut return_type = return_type_resolved(&input.decl.output);
+    return_type.adjust_for_return_type();
+
+    if let syn::ReturnType::Type(_, _) = input.decl.output {
+        if return_type.rust_result_type != return_type.rust_original_type {
+            input.decl.output =
+                syn::parse_str(&format!("-> {}", return_type.rust_result_type)).unwrap();
+            let mut last_stmt = input
+                .block
+                .stmts
+                .pop()
+                .expect("Can't get last fn statement to convert result type");
+            last_stmt = syn::Stmt::Expr(parse_quote! {
+                ToJNI::to_jni(#last_stmt, &env)
+            });
+            input.block.stmts.push(last_stmt);
+        }
+    }
+
+    let expanded = quote! {
+        #input
+    };
+    TokenStream::from(expanded)
+}
+
 fn add_fn_to_structure(
     attr: TokenStream,
     item: TokenStream,
@@ -159,13 +188,14 @@ fn add_fn_to_structure(
         .map(|n_type| (n_type.java_type, n_type.ident.unwrap()))
         .collect();
 
-    let return_type = return_type_resolved(&input.decl.output);
+    let mut return_type = return_type_resolved(&input.decl.output);
+    return_type.adjust_for_return_type();
 
     let fn_name = input.ident.to_string();
     class.methods.push(Method {
         is_static,
         name: fn_name,
-        return_type,
+        return_type: return_type.java_type,
         parameters: java_parameters,
     });
 
@@ -213,9 +243,9 @@ fn return_type(output: &syn::ReturnType) -> String {
     }
 }
 
-fn return_type_resolved(output: &syn::ReturnType) -> String {
+fn return_type_resolved(output: &syn::ReturnType) -> ResolvedType {
     let raw_type = return_type(output);
-    resolve_type(None, &raw_type).java_type
+    resolve_type(None, &raw_type)
 }
 
 #[derive(Debug)]
@@ -223,8 +253,8 @@ struct ResolvedType {
     rust_original_type: String,
     rust_result_type: String,
     java_type: String,
-    input_conversion_stmt: Option<syn::Stmt>,
     ident: Option<String>,
+    input_conversion_stmt: Option<syn::Stmt>,
 }
 
 impl ResolvedType {
@@ -254,26 +284,33 @@ impl ResolvedType {
         }
     }
 
-    fn input_conversion(
-        ident: &str,
+    fn type_conversion(
+        ident: Option<&str>,
         rust_original_type: &str,
         rust_result_type: &str,
         java_type: &str,
     ) -> Self {
-        // let ident_rs: syn::Ident = parse_quote!(#ident);
-        let ident_rs = syn::Ident::new(ident, proc_macro2::Span::call_site());
-        // let rust_original_type_rs: syn::Type = parse_quote!(#rust_original_type);
+        let input_conversion_stmt = ident.map(|ident| {
+            let ident_rs = syn::Ident::new(ident, proc_macro2::Span::call_site());
 
-        let stmt: syn::Stmt = parse_quote!{
-            let #ident_rs : String = FromJNI::from_jni(&env, #ident_rs);
-        };
-
+            let stmt: syn::Stmt = parse_quote!{
+                let #ident_rs : String = FromJNI::from_jni(&env, #ident_rs);
+            };
+            stmt
+        });
         Self {
             rust_original_type: rust_original_type.to_owned(),
             rust_result_type: rust_result_type.to_owned(),
             java_type: java_type.to_owned(),
-            input_conversion_stmt: Some(stmt),
-            ident: Some(ident.to_owned()),
+            ident: ident.map(|n| n.to_owned()),
+            input_conversion_stmt,
+        }
+    }
+
+    // HACK
+    fn adjust_for_return_type(&mut self) {
+        if self.rust_result_type == "JString" {
+            self.rust_result_type = "jstring".to_owned();
         }
     }
 }
@@ -287,7 +324,6 @@ fn resolve_type(ident: Option<&str>, raw_type: &str) -> ResolvedType {
             rust_original_type: raw_type.to_owned(),
             rust_result_type: raw_type.to_owned(),
             java_type: "String".to_owned(),
-            input_conversion_stmt: None,
             ident: ident.map(|n| n.to_owned()),
             ..ResolvedType::default()
         },
@@ -297,12 +333,7 @@ fn resolve_type(ident: Option<&str>, raw_type: &str) -> ResolvedType {
             java_type: "void".to_owned(),
             ..ResolvedType::default()
         },
-        "String" => ResolvedType::input_conversion(
-            ident.expect("Expected ident for input conversion."),
-            raw_type,
-            "JString",
-            "String",
-        ),
+        "String" => ResolvedType::type_conversion(ident, raw_type, "JString", "String"),
         other => panic!("Unable to resolve type \"{}\"", other),
     }
 }
@@ -313,8 +344,8 @@ impl Default for ResolvedType {
             rust_original_type: String::new(),
             rust_result_type: String::new(),
             java_type: String::new(),
-            input_conversion_stmt: None,
             ident: None,
+            input_conversion_stmt: None,
         }
     }
 }

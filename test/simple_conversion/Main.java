@@ -1,17 +1,27 @@
 import some.pkg.HelloWorld;
 
 class Main {
-    // The rest is just regular ol' Java!
     public static void main(String[] args) {
         HelloWorld instance = new HelloWorld();
 
-        String output = instance.helloInputConversionManual("josh");
-        System.out.println(output);
+        String outputInputConversion = instance.helloInputConversion("josh");
+        System.out.println(outputInputConversion);
 
-        String output2 = instance.helloInputConversion("josh");
-        System.out.println(output2);
+        String outputInputConversionParamName = instance.helloInputConversionParamName("josh");
+        System.out.println(outputInputConversionParamName);
 
-        String output3 = instance.helloInputConversionParamName("josh");
-        System.out.println(output3);
+        String outputOutputConversion = instance.helloOutputConversion("josh");
+        System.out.println(outputOutputConversion);
+
+        String outputBothConversion = instance.helloBothConversion("josh");
+        System.out.println(outputBothConversion);
+
+        // Manual sanity-check
+
+        String outputInputConversionManual = instance.helloInputConversionManual("josh");
+        System.out.println(outputInputConversionManual);
+
+        String outputOutputConversionManual = instance.helloOutputConversionManual("josh");
+        System.out.println(outputOutputConversionManual);
     }
 }
