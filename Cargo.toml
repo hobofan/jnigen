@@ -1,7 +1,18 @@
+[package]
+name = "jnigen"
+version = "0.1.0"
+authors = ["Maximilian Goisser <goisser94@gmail.com>"]
+
+[lib]
+
+[dependencies]
+jnigen_macro = { path = "jnigen_macro", version = "=0.1.0" }
+jni = "0.10"
+
 [workspace]
 
 members = [
-  "jnigen",
+  "jnigen_macro",
   "jnigen_build",
 ]
 

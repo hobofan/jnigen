@@ -2,7 +2,7 @@ use jnigen_shared::helpers::{CodegenStructure, Method};
 use jnigen_shared::helpers;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, AttributeArgs, ItemFn};
+use syn::{parse_macro_input, parse_quote, AttributeArgs, ItemFn, Token};
 
 use util::{attr_class, attr_package};
 
@@ -12,6 +12,7 @@ pub fn jni_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut processed_item = add_attributes(item.clone());
     processed_item = set_visibility(processed_item);
     processed_item = set_fn_name(attr.clone(), processed_item);
+    processed_item = adjust_parameters(attr.clone(), processed_item);
 
     if let Some(mut structure) = structure {
         add_fn_to_structure(attr, item, &mut structure);
@@ -78,6 +79,46 @@ fn set_fn_name(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
+fn adjust_parameters(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut input = parse_macro_input!(item as ItemFn);
+
+    let new_inputs: syn::punctuated::Punctuated<syn::FnArg, Token!(,)> = input
+        .decl
+        .inputs
+        .clone()
+        .into_iter()
+        .enumerate()
+        .map(|(i, fn_arg)| {
+            if i < 2 {
+                return fn_arg;
+            }
+            let resolved_type = input_type_resolved(&input_ident(&fn_arg), &fn_arg);
+
+            if let Some(stmt) = resolved_type.input_conversion_stmt {
+                let mut new_stmts = vec![stmt];
+                new_stmts.append(&mut input.block.stmts.clone());
+                input.block.stmts = new_stmts;
+            }
+
+            if let syn::FnArg::Captured(captured) = fn_arg {
+                let ty = syn::parse_str(&resolved_type.rust_result_type).unwrap();
+                return syn::FnArg::Captured(syn::ArgCaptured {
+                    pat: captured.pat,
+                    colon_token: captured.colon_token,
+                    ty,
+                });
+            }
+            panic!()
+        })
+        .collect();
+    input.decl.inputs = new_inputs;
+
+    let expanded = quote! {
+        #input
+    };
+    TokenStream::from(expanded)
+}
+
 fn add_fn_to_structure(
     attr: TokenStream,
     item: TokenStream,
@@ -106,12 +147,16 @@ fn add_fn_to_structure(
         _ => false,
     };
 
-    let parameters = input
+    let parameters: Vec<_> = input
         .decl
         .inputs
         .iter()
         .skip(2)
-        .map(|input| (input_type_resolved(input), input_ident(input)))
+        .map(|input| input_type_resolved(&input_ident(input), input))
+        .collect();
+    let java_parameters: Vec<(String, String)> = parameters
+        .into_iter()
+        .map(|n_type| (n_type.java_type, n_type.ident.unwrap()))
         .collect();
 
     let return_type = return_type_resolved(&input.decl.output);
@@ -121,7 +166,7 @@ fn add_fn_to_structure(
         is_static,
         name: fn_name,
         return_type,
-        parameters,
+        parameters: java_parameters,
     });
 
     TokenStream::new()
@@ -139,9 +184,9 @@ fn input_type(input: &syn::FnArg) -> String {
     }
 }
 
-fn input_type_resolved(input: &syn::FnArg) -> String {
+fn input_type_resolved(ident: &str, input: &syn::FnArg) -> ResolvedType {
     let raw_type = input_type(input);
-    resolve_type(&raw_type)
+    resolve_type(Some(ident), &raw_type)
 }
 
 fn input_ident(input: &syn::FnArg) -> String {
@@ -170,22 +215,106 @@ fn return_type(output: &syn::ReturnType) -> String {
 
 fn return_type_resolved(output: &syn::ReturnType) -> String {
     let raw_type = return_type(output);
-    resolve_type(&raw_type)
+    resolve_type(None, &raw_type).java_type
 }
 
-fn resolve_type(raw_type: &str) -> String {
-    match raw_type.as_ref() {
-        "JString" | "jstring" => "String",
-        "jbyte" => "byte",
-        "jchar" => "char",
-        "jint" => "int",
-        "jshort" => "short",
-        "jlong" => "long",
-        "jboolean" => "boolean",
-        "jfloat" => "float",
-        "jdouble" => "double",
+#[derive(Debug)]
+struct ResolvedType {
+    rust_original_type: String,
+    rust_result_type: String,
+    java_type: String,
+    input_conversion_stmt: Option<syn::Stmt>,
+    ident: Option<String>,
+}
 
-        "void" => "void",
+impl ResolvedType {
+    fn try_resolve_primitive(ident: Option<&str>, raw_type: &str) -> Option<Self> {
+        let resolved = match raw_type {
+            "jbyte" | "i8" => Some("byte"),
+            "jchar" | "u16" => Some("char"),
+            "jshort" | "i16" => Some("short"),
+            "jint" | "i32" => Some("int"),
+            "jlong" | "i64" => Some("long"),
+            "jboolean" | "u8" => Some("boolean"),
+            "jfloat" | "f32" => Some("float"),
+            "jdouble" | "f64" => Some("double"),
+            _ => None,
+        };
+
+        resolved.map(|java_type| Self::primitive(ident, raw_type, java_type))
+    }
+
+    fn primitive(ident: Option<&str>, rust_type: &str, java_type: &str) -> Self {
+        Self {
+            rust_original_type: rust_type.to_owned(),
+            rust_result_type: rust_type.to_owned(),
+            java_type: java_type.to_owned(),
+            ident: ident.map(|n| n.to_owned()),
+            ..ResolvedType::default()
+        }
+    }
+
+    fn input_conversion(
+        ident: &str,
+        rust_original_type: &str,
+        rust_result_type: &str,
+        java_type: &str,
+    ) -> Self {
+        // let ident_rs: syn::Ident = parse_quote!(#ident);
+        let ident_rs = syn::Ident::new(ident, proc_macro2::Span::call_site());
+        // let rust_original_type_rs: syn::Type = parse_quote!(#rust_original_type);
+
+        let stmt: syn::Stmt = parse_quote!{
+            let #ident_rs : String = FromJNI::from_jni(&env, #ident_rs);
+        };
+
+        Self {
+            rust_original_type: rust_original_type.to_owned(),
+            rust_result_type: rust_result_type.to_owned(),
+            java_type: java_type.to_owned(),
+            input_conversion_stmt: Some(stmt),
+            ident: Some(ident.to_owned()),
+        }
+    }
+}
+
+fn resolve_type(ident: Option<&str>, raw_type: &str) -> ResolvedType {
+    if let Some(resolved) = ResolvedType::try_resolve_primitive(ident, raw_type) {
+        return resolved;
+    }
+    match raw_type.as_ref() {
+        "JString" | "jstring" => ResolvedType {
+            rust_original_type: raw_type.to_owned(),
+            rust_result_type: raw_type.to_owned(),
+            java_type: "String".to_owned(),
+            input_conversion_stmt: None,
+            ident: ident.map(|n| n.to_owned()),
+            ..ResolvedType::default()
+        },
+        "void" => ResolvedType {
+            rust_original_type: raw_type.to_owned(),
+            rust_result_type: raw_type.to_owned(),
+            java_type: "void".to_owned(),
+            ..ResolvedType::default()
+        },
+        "String" => ResolvedType::input_conversion(
+            ident.expect("Expected ident for input conversion."),
+            raw_type,
+            "JString",
+            "String",
+        ),
         other => panic!("Unable to resolve type \"{}\"", other),
-    }.to_owned()
+    }
+}
+
+impl Default for ResolvedType {
+    fn default() -> Self {
+        Self {
+            rust_original_type: String::new(),
+            rust_result_type: String::new(),
+            java_type: String::new(),
+            input_conversion_stmt: None,
+            ident: None,
+        }
+    }
 }
