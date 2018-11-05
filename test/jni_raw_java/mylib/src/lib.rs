@@ -1,7 +1,7 @@
 extern crate jni;
 extern crate jnigen;
 
-use jnigen::{jni_raw_java, JNI};
+use jnigen::prelude::*;
 
 #[derive(JNI)]
 #[jni_class(package = "some.pkg")]
