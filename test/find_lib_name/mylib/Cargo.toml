@@ -10,6 +10,3 @@ crate_type = ["cdylib"]
 [dependencies]
 jni = "0.10.2"
 jnigen = { path = "../../.." }
-
-[build-dependencies]
-jnigen_build = { path = "../../../jnigen_build" }

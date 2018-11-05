@@ -13,7 +13,6 @@ jni = "0.10"
 
 members = [
   "jnigen_macro",
-  "jnigen_build",
 ]
 
 exclude = [
